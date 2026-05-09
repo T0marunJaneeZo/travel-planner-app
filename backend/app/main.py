@@ -1,7 +1,38 @@
+import json
+import os
+
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from openai import OpenAI
 
 from .schemas import ErrorResponse, GenerateTripRequest, TripPlan
+
+
+load_dotenv()
+
+
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+
+
+SYSTEM_PROMPT = """あなたは旅行プランナーです。
+ユーザーの希望から旅行の行程を作成してください。
+
+制約:
+- 出力はJSONのみ
+- Markdownや説明文は出力しない
+- spots は3〜5件
+- 各spotには name, time, description, lat, lng を含める
+- itinerary には time, title, memo を含める
+- notes には旅行時の注意点を2〜4件入れる
+- description, memo, notes は日本語
+- 緯度経度は地図表示に使える程度の精度でよい
+- レスポンスのトップレベルには title, destination, summary, spots, itinerary, notes を含める
+"""
+
+
+client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 
 
 app = FastAPI(title="travel-planner-backend")
@@ -17,57 +48,26 @@ async def health_check() -> dict[str, str]:
     response_model=TripPlan,
     responses={500: {"model": ErrorResponse}},
 )
-async def generate_trip(_: GenerateTripRequest) -> TripPlan | JSONResponse:
+async def generate_trip(request: GenerateTripRequest) -> TripPlan | JSONResponse:
     try:
-        return TripPlan(
-            title="鎌倉日帰りさんぽ",
-            destination="鎌倉",
-            summary="海、カフェ、寺をめぐる日帰りプランです。",
-            spots=[
-                {
-                    "name": "鶴岡八幡宮",
-                    "time": "10:00",
-                    "description": "鎌倉を代表する神社。",
-                    "lat": 35.3261,
-                    "lng": 139.5564,
-                },
-                {
-                    "name": "小町通り",
-                    "time": "11:30",
-                    "description": "食べ歩きや土産探しに便利な通り。",
-                    "lat": 35.3192,
-                    "lng": 139.5505,
-                },
-                {
-                    "name": "由比ヶ浜",
-                    "time": "14:00",
-                    "description": "海辺を散歩しながらひと休みできるスポット。",
-                    "lat": 35.3068,
-                    "lng": 139.5359,
-                },
+        if client is None:
+            raise RuntimeError("OPENAI_API_KEY is not set")
+
+        response = client.chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": request.prompt},
             ],
-            itinerary=[
-                {
-                    "time": "10:00",
-                    "title": "鶴岡八幡宮を散策",
-                    "memo": "鎌倉駅から徒歩で移動",
-                },
-                {
-                    "time": "11:30",
-                    "title": "小町通りで昼食",
-                    "memo": "混むので早めに移動",
-                },
-                {
-                    "time": "14:00",
-                    "title": "由比ヶ浜を散歩",
-                    "memo": "海沿いは風が強い場合あり",
-                },
-            ],
-            notes=[
-                "歩きやすい靴がおすすめ",
-                "海沿いは風が強い可能性あり",
-            ],
+            response_format={"type": "json_object"},
         )
+
+        content = response.choices[0].message.content
+        if content is None:
+            raise RuntimeError("OpenAI response content is empty")
+
+        plan_data = json.loads(content)
+        return TripPlan.model_validate(plan_data)
     except Exception:
         return JSONResponse(
             status_code=500,

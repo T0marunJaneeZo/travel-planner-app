@@ -11,6 +11,8 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+Set `OPENAI_API_KEY` in `backend/.env` before calling `POST /api/generate-trip`.
+
 ## Endpoints
 
 - `GET /health`
